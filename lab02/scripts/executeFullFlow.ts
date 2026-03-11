@@ -2,10 +2,14 @@ import { createWalletClient, createPublicClient, http, parseEther, formatEther }
 import { privateKeyToAccount } from "viem/accounts";
 import "dotenv/config";
 
-// Contract addresses from deployment
-const TOKEN_A_ADDRESS = "0x155a5a762b7163e4270db8899b82bb81b7fa3bdb" as `0x${string}`;
-const TOKEN_B_ADDRESS = "0x79ba1ef4481627da7860dafd57fd790230a16e0a" as `0x${string}`;
-const TOKEN_TRADE_ADDRESS = "0x1f993aab8b432a9c792c9a953cc16c5b7d95a951" as `0x${string}`;
+// Contract addresses from .env (set after deployment)
+const TOKEN_A_ADDRESS = process.env.TOKEN_A_ADDRESS as `0x${string}`;
+const TOKEN_B_ADDRESS = process.env.TOKEN_B_ADDRESS as `0x${string}`;
+const TOKEN_TRADE_ADDRESS = process.env.TOKEN_TRADE_ADDRESS as `0x${string}`;
+
+if (!TOKEN_A_ADDRESS || !TOKEN_B_ADDRESS || !TOKEN_TRADE_ADDRESS) {
+  throw new Error("Missing contract addresses in .env. Please set TOKEN_A_ADDRESS, TOKEN_B_ADDRESS, TOKEN_TRADE_ADDRESS");
+}
 
 // Zircuit Garfield Testnet config
 const zircuitGarfield = {
