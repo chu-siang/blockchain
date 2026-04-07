@@ -1,307 +1,102 @@
-# BDaF 2026 Lab04 — Membership Board: Storage vs. Merkle Trees
+# Lab04 — Membership Board: Storage vs. Merkle Trees
 
-**Deadline:** Mar 27st (Friday midnight 23:59)
-
-**Submission:**
-
----
-
-# Readings
-
-### Merkle Trees
-- https://opendsa-server.cs.vt.edu/ODSA/Books/usek/gin231-c/spring-2022-39903ab6-41ba-4bfb-9a68-5abc9010a363/TR_930am/html/MerkleTrees.html
-- https://decentralizedthoughts.github.io/2020-12-22-what-is-a-merkle-tree/
-
-### OpenZeppelin Merkle Proof
-- https://docs.openzeppelin.com/contracts/5.x/api/utils#MerkleProof
-
-### Solidity Gas Optimization
-- https://docs.soliditylang.org/en/latest/internals/layout_in_storage.html
-- https://www.evm.codes/
-
-### Gas Profiling
-- Hardhat Gas Reporter: https://github.com/cgewecke/hardhat-gas-reporter
-- Foundry Gas Reports: https://book.getfoundry.sh/forge/gas-reports
-
----
-
-# Project Overview
-
-In this lab, you will build a **Membership Board** contract where an admin manages a list of **1,000 members**. You will implement membership management using three different approaches and compare their gas costs.
-
-The goal of this assignment is to help you understand:
-
-- how on-chain storage costs scale with the number of entries
-- the trade-off between on-chain storage (mapping) and off-chain computation (Merkle proofs)
-- how batching operations can reduce per-unit gas costs
-- how to use gas profiling tools to measure and compare contract execution costs
-
-### Learning Objectives
-
-- Understand the gas cost of `SSTORE` and `SLOAD` operations
-- Compare storage-based membership (mapping) vs. commitment-based membership (Merkle tree)
-- Learn to use gas profiling tools (Hardhat Gas Reporter or Foundry gas reports)
-- Reason about trade-offs: on-chain storage cost vs. off-chain proof generation
-
----
-
-# Setup
-
-We provide a pre-generated list of **1,000 Ethereum addresses** in [`members.json`](./members.json). You **must use this list** for your assignment so that results are comparable across submissions.
-
-We also provide a script [`generate_members.js`](./generate_members.js) that can generate a fresh list of N addresses if you want to experiment with different sizes:
+## How to Compile and Run Tests
 
 ```bash
-node generate_members.js <N>
-```
+# Install dependencies
+pnpm install
 
-This outputs a `members.json` file with the generated addresses. Requires `ethers` (`npm install ethers`).
-The same list must be used across all three approaches while doing gas profiling for different sizes.
+# Compile contracts
+npx hardhat compile
 
-You must also generate the **Merkle tree** and **Merkle proofs** off-chain (in your test/script files) for use in Part 3.
-
-> **Hint:** Use the [`@openzeppelin/merkle-tree`](https://github.com/OpenZeppelin/merkle-tree) JavaScript library or [`murky`](https://github.com/dmfxyz/murky) (for Foundry) to generate the tree and proofs off-chain.
-
----
-
-# Contract Requirements
-
-Create a single contract called `MembershipBoard` with the following functionality.
-
----
-
-## Part 1: Add Members One-by-One (Mapping)
-
-Implement a function that adds **one member at a time** using a key-value mapping:
-
-```solidity
-mapping(address => bool) public members;
-
-function addMember(address _member) external onlyOwner
-```
-
-Requirements:
-- Only the contract owner can call this function
-- Must store the member in the `members` mapping
-- Must revert if the address is already a member
-- Must emit a `MemberAdded(address indexed member)` event
-
-To register all 1,000 members, this function must be called **1,000 times**.
-
----
-
-## Part 2: Batch Add Members (Mapping)
-
-Implement a function that adds **multiple members at once** using the same mapping:
-
-```solidity
-function batchAddMembers(address[] calldata _members) external onlyOwner
-```
-
-Requirements:
-- Only the contract owner can call this function
-- Must store each member in the `members` mapping
-- Must revert if any address is already a member
-- Must emit a `MemberAdded(address indexed member)` event for each member
-
-> **Note:** You may need to split the 1,000 members into multiple batches depending on the block gas limit. Record how many batches you used and the size of each batch.
-
----
-
-## Part 3: Set Merkle Root
-
-Implement a function that stores a **Merkle root** representing the membership list:
-
-```solidity
-bytes32 public merkleRoot;
-
-function setMerkleRoot(bytes32 _root) external onlyOwner
-```
-
-Requirements:
-- Only the contract owner can call this function
-- Must update the `merkleRoot` state variable
-- Must emit a `MerkleRootSet(bytes32 indexed root)` event
-
-The Merkle tree should be constructed off-chain from the same list of 1,000 addresses. The leaf for each address should be:
-
-```solidity
-leaf = keccak256(abi.encodePacked(address))
-```
-
-> **Hint (OpenZeppelin Merkle Tree library):** If you use the `@openzeppelin/merkle-tree` library, use `StandardMerkleTree.of(values, leafEncoding)` where each value is `[address]` and the leaf encoding is `["address"]`. The library handles double-hashing internally, so your contract verification should use `MerkleProof.verify()` from OpenZeppelin which is compatible with this format.
-
----
-
-## Part 4: Verify Membership (Mapping)
-
-Implement a function that checks membership using the mapping:
-
-```solidity
-function verifyMemberByMapping(address _member) external view returns (bool)
-```
-
-Requirements:
-- Returns `true` if the address exists in the `members` mapping
-- Returns `false` otherwise
-
----
-
-## Part 5: Verify Membership (Merkle Proof)
-
-Implement a function that checks membership using a Merkle proof:
-
-```solidity
-function verifyMemberByProof(address _member, bytes32[] calldata _proof) external view returns (bool)
-```
-
-Requirements:
-- Computes the leaf hash from the address
-- Verifies the proof against the stored `merkleRoot`
-- Returns `true` if the proof is valid, `false` otherwise
-
-> **Hint:** Use OpenZeppelin's `MerkleProof.verify()`:
-> ```solidity
-> import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
->
-> bytes32 leaf = keccak256(bytes.concat(keccak256(abi.encode(_member))));
-> return MerkleProof.verify(_proof, merkleRoot, leaf);
-> ```
-> Note: The double `keccak256` is required when using OpenZeppelin's `StandardMerkleTree` to prevent second preimage attacks.
-
----
-
-# Gas Profiling
-
-This is the **core analysis** of this lab.
-
-You must measure and record the gas usage of the following **5 actions**:
-
-| # | Action | Description |
-|---|--------|-------------|
-| 1 | `addMember` | Gas cost of adding **one** member via `addMember()`. Report the gas for a single call. To register all 1,000 members, multiply by 1,000 (also account for the 21,000 base transaction cost per call). |
-| 2 | `batchAddMembers` | Total gas cost of adding **all 1,000 members** via `batchAddMembers()`. If you split into multiple batches, report the total across all batches. |
-| 3 | `setMerkleRoot` | Gas cost of calling `setMerkleRoot()` once to register all 1,000 members. |
-| 4 | `verifyMemberByMapping` | Gas cost of verifying **one** member using the mapping. |
-| 5 | `verifyMemberByProof` | Gas cost of verifying **one** member using a Merkle proof. |
-
-### How to Measure Gas
-
-Use one of the following tools:
-
-**Hardhat Gas Reporter** (recommended for Hardhat users):
-```bash
-npm install --save-dev hardhat-gas-reporter
-```
-
-Add to `hardhat.config.js`:
-```javascript
-require("hardhat-gas-reporter");
-
-module.exports = {
-  gasReporter: {
-    enabled: true,
-  },
-};
-```
-
-**Foundry Gas Reports** (recommended for Foundry users):
-```bash
-forge test --gas-report
-```
-
-You may also use `gasleft()` in Solidity or `tx.receipt.gasUsed` in your test scripts for more granular measurements.
-
----
-
-# Questions
-
-Answer the following questions in your `README.md`:
-
-1. **Storage cost comparison:** What is the total gas cost of registering all 1,000 members for each of the three approaches (addMember x1000, batchAddMembers, setMerkleRoot)? Which is cheapest and why?
-
-2. **Verification cost comparison:** What is the gas cost of verifying a single member using the mapping vs. the Merkle proof? Which is cheaper and why?
-
-3. **Trade-off analysis:** The Merkle tree approach is very cheap to store on-chain but requires the verifier to provide a proof. In what scenarios would you prefer the mapping approach over the Merkle tree approach, and vice versa? Consider factors such as:
-   - Who pays for the verification gas?
-   - How often does the membership list change?
-   - Is the full member list public or private?
-
-4. **Batch size experimentation:** Try different batch sizes for `batchAddMembers` (e.g., 50, 100, 250, 500). How does the per-member gas cost change with batch size? Is there a sweet spot?
-
----
-
-# Project Requirements
-
-- Project MUST use **Hardhat or Foundry**
-- Tests must be included
-- TA must be able to run tests via:
-
-```
+# Run tests (includes gas profiling output)
 npx hardhat test
 ```
 
-or
-
-```
-forge test
-```
-
 ---
 
-# Minimum Test Cases
+## Gas Profiling Results
 
-## Adding Members
+Gas was measured using `receipt.gasUsed` from transaction receipts and `estimateGas` for view functions.
 
-- Owner can add a single member via `addMember`
-- Non-owner cannot add a member
-- Adding a duplicate member reverts
-- Owner can batch add members via `batchAddMembers`
-- Adding a duplicate in a batch reverts
-- All 1,000 members are correctly stored after batch add
-
-## Setting Merkle Root
-
-- Owner can set the Merkle root
-- Non-owner cannot set the Merkle root
-
-## Verification (Mapping)
-
-- Returns `true` for a registered member
-- Returns `false` for a non-member
-
-## Verification (Merkle Proof)
-
-- Valid proof for a registered member returns `true`
-- Invalid proof returns `false`
-- Proof for a non-member returns `false`
-
-## Gas Profiling
-
-- Gas measurements are recorded for all 5 actions listed above
-- Results are presented in a comparison table
-
----
-
-# Deliverables
-
-Submit the following in your GitHub repository:
-
-- [ ] `MembershipBoard` contract with all 5 functions
-- [ ] Off-chain Merkle tree generation script
-- [ ] Complete test suite with gas profiling
-- [ ] A `README.md` with:
-  - How to compile and run tests
-  - Gas profiling results in a table format:
+Batch size used for `batchAddMembers`: **250** (4 batches of 250).
 
 | Action | Gas Used |
 |--------|----------|
-| `addMember` (single call) | |
-| `addMember` x1000 (total estimated) | |
-| `batchAddMembers` (all 1,000) | |
-| `setMerkleRoot` | |
-| `verifyMemberByMapping` | |
-| `verifyMemberByProof` | |
+| `addMember` (single call) | 47,515 |
+| `addMember` x1000 (total estimated) | 47,515,000 |
+| `batchAddMembers` (all 1,000, batch=250) | 24,792,200 |
+| `setMerkleRoot` | 47,272 |
+| `verifyMemberByMapping` | 23,989 |
+| `verifyMemberByProof` | 35,520 |
 
-  - Written answers to all questions above
-  - Description of batch sizes tested and findings
+---
+
+## Batch Size Experimentation
+
+| Batch Size | Total Gas | Per-Member Gas | Batches |
+|------------|-----------|----------------|---------|
+| 50 | 25,177,320 | 25,177 | 20 |
+| 100 | 24,936,620 | 24,936 | 10 |
+| 250 | 24,792,200 | 24,792 | 4 |
+| 500 | 24,744,084 | 24,744 | 2 |
+
+---
+
+## Questions
+
+### 1. Storage cost comparison
+
+| Approach | Total Gas |
+|----------|-----------|
+| `addMember` x1000 | 47,515,000 |
+| `batchAddMembers` (batch=250) | 24,792,200 |
+| `setMerkleRoot` | 47,272 |
+
+**`setMerkleRoot` is by far the cheapest.** It only writes a single `bytes32` value to storage (one `SSTORE` operation), regardless of how many members exist. The Merkle tree is constructed entirely off-chain, so no per-member storage cost is incurred on-chain.
+
+`batchAddMembers` is cheaper than calling `addMember` 1,000 times because the batch approach avoids the 21,000 gas base transaction cost per call. Each individual `addMember` call pays 21,000 base + ~26,515 execution gas, while `batchAddMembers` amortizes the base cost across all members in a single transaction.
+
+Both mapping-based approaches require 1,000 `SSTORE` operations (writing `false` → `true`), which costs ~20,000 gas each, making them inherently expensive.
+
+### 2. Verification cost comparison
+
+| Method | Gas |
+|--------|-----|
+| `verifyMemberByMapping` | 23,989 |
+| `verifyMemberByProof` | 35,520 |
+
+**Mapping verification is cheaper.** It performs a single `SLOAD` operation to look up `members[_member]`, which is an O(1) storage read (~2,100 gas for a warm slot).
+
+Merkle proof verification is more expensive because it must compute `log2(1000) ≈ 10` hash operations (each `keccak256` call), plus the initial double-hashing of the leaf. Each hashing step involves memory operations and the `KECCAK256` opcode, which accumulates to a higher total gas cost.
+
+### 3. Trade-off analysis
+
+**Prefer mapping when:**
+- **Verification is frequent and cost-sensitive:** If the contract itself needs to verify membership in other functions (e.g., gating access), the mapping's cheaper `SLOAD` cost (23,989 vs 35,520 gas) adds up over many calls.
+- **The membership list changes frequently:** Updating a mapping is straightforward — just call `addMember()`. With a Merkle tree, any change requires recomputing the entire tree off-chain and updating the root, which adds off-chain complexity.
+- **Users should not need to provide proofs:** With mappings, anyone can verify membership by calling the contract directly. Merkle proofs require the verifier to have access to the tree and generate a proof.
+
+**Prefer Merkle tree when:**
+- **Registration cost is the bottleneck:** Storing 1,000 members via mapping costs ~24.8M gas, while the Merkle root costs only ~47K gas — a ~525x reduction. For large or infrequently changing lists, this is a massive savings.
+- **The member list is managed off-chain:** If a centralized admin maintains the list and only needs to commit it on-chain occasionally (e.g., airdrop allowlists, whitelist sales), the Merkle approach is ideal.
+- **Privacy of the full member list matters:** With a Merkle root, the full list is never stored on-chain. Individual members can prove their membership without revealing the entire list. With a mapping, every member address is publicly visible via storage reads.
+- **The verifier pays for their own gas:** In scenarios like allowlist minting, the user provides their own proof and pays the gas. The extra ~11K gas per verification is a small price compared to the massive savings on registration.
+
+### 4. Batch size experimentation
+
+| Batch Size | Per-Member Gas |
+|------------|----------------|
+| 50 | 25,177 |
+| 100 | 24,936 |
+| 250 | 24,792 |
+| 500 | 24,744 |
+
+As batch size increases, per-member gas decreases because the fixed overhead of each transaction (21,000 base gas + function selector decoding + loop setup) is amortized over more members. However, the improvement shows **diminishing returns** — going from 50 to 100 saves ~241 gas/member, while going from 250 to 500 only saves ~48 gas/member.
+
+The **sweet spot is around 250–500**, balancing:
+- Gas efficiency (per-member cost flattens out)
+- Block gas limit constraints (larger batches risk exceeding the 30M gas limit on mainnet)
+- Transaction reliability (smaller batches are less likely to fail)
+
+A batch size of 250 is a practical choice: it achieves most of the gas savings while staying well within block gas limits and requiring only 4 transactions.
