@@ -1,0 +1,8 @@
+.env
+node_modules/
+artifacts/
+cache/
+dist/
+.DS_Store
+submit.md
+local/
